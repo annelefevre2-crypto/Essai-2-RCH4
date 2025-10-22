@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RCH • Photo → OCR + QR → Prompt ChatGPT (optimisé)</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icone-192.png">
+<style>
+body{margin:0;font-family:system-ui,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:#0b1220;color:#e5e7eb}
+header{padding:16px 20px;background:linear-gradient(90deg,#0ea5e9,#06b6d4);color:#001018;font-weight:700}
+main{max-width:980px;margin:24px auto;padding:0 16px 40px;display:grid;gap:16px}
+.card{background:#111827cc;border:1px solid #ffffff10;border-radius:16px;padding:16px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button{background:#06b6d4;border:none;color:#001018;font-weight:700;padding:10px 14px;border-radius:10px;cursor:pointer}
+button.secondary{background:transparent;border:1px solid #334155;color:#e5e7eb}
+video,canvas{width:100%;border-radius:12px;background:#0f172a;border:1px dashed #334155;min-height:260px;display:block}
+textarea{width:100%;min-height:220px;border-radius:12px;border:1px solid #334155;background:#0b1220;color:#e5e7eb;padding:12px;font-size:14px}
+.progress{height:6px;background:#0b1220;border-radius:999px;overflow:hidden;border:1px solid #1f2a3a}
+.bar{height:100%;width:0;background:#06b6d4;transition:width .3s}
+.hint{font-size:12px;color:#94a3b8}
+</style>
+</head>
+<body>
+<header>RCH • Photo → OCR + QR → Prompt ChatGPT (optimisé)</header>
+<main>
+<section class="card">
+  <h2>1) Photo</h2>
+  <div class="row">
+    <button id="btnStart">Activer la caméra</button>
+    <button id="btnShot" class="secondary" disabled>Capturer</button>
+    <input id="file" type="file" accept="image/*" capture="environment" style="display:none">
+    <button id="btnUpload" class="secondary">Importer une image</button>
+  </div>
+  <video id="video" playsinline></video>
+  <canvas id="canvas" hidden></canvas>
+</section>
+
+<section class="card">
+  <h2>2) OCR + QR (amélioré)</h2>
+  <div class="row"><button id="btnProcess" disabled>Traiter</button><button id="btnClear" class="secondary">Effacer</button></div>
+  <div class="progress"><div id="bar" class="bar"></div></div>
+  <div id="status" class="hint">Prêt.</div>
+  <textarea id="result" placeholder="Texte OCR nettoyé + contenu du QR…"></textarea>
+</section>
+
+<section class="card">
+  <h2>3) Prompt</h2>
+  <textarea id="prompt"></textarea>
+  <div class="row" style="margin-top:10px">
+    <button id="btnOpen">Ouvrir dans ChatGPT</button>
+    <button id="btnCopy" class="secondary">Copier</button>
+  </div>
+</section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script>
+const video=document.getElementById('video'),canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d');
+const btnStart=document.getElementById('btnStart'),btnShot=document.getElementById('btnShot'),btnUpload=document.getElementById('btnUpload'),fileInput=document.getElementById('file');
+const btnProcess=document.getElementById('btnProcess'),btnClear=document.getElementById('btnClear'),statusEl=document.getElementById('status'),bar=document.getElementById('bar');
+const result=document.getElementById('result'),promptEl=document.getElementById('prompt'),btnOpen=document.getElementById('btnOpen'),btnCopy=document.getElementById('btnCopy');
+let capturedImage=null;
+
+function setStatus(m,p){statusEl.textContent=m; if(p!=null) bar.style.width=(p*100)+'%';}
+function showCanvas(){video.hidden=true;canvas.hidden=false;}
+btnStart.onclick=async()=>{try{const s=await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});video.srcObject=s;await video.play();btnShot.disabled=true===false?false:false;btnShot.disabled=false;}catch(e){alert('Caméra indisponible: '+e.message);}};
+btnShot.onclick=()=>{const w=video.videoWidth||1280,h=video.videoHeight||720;canvas.width=w;canvas.height=h;ctx.drawImage(video,0,0,w,h);showCanvas();capturedImage=canvas.toDataURL('image/png');btnProcess.disabled=false;};
+btnUpload.onclick=()=>fileInput.click();
+fileInput.onchange=e=>{const f=e.target.files[0];if(!f)return;const img=new Image();img.onload=()=>{canvas.width=img.width;canvas.height=img.height;ctx.drawImage(img,0,0);showCanvas();capturedImage=canvas.toDataURL('image/png');btnProcess.disabled=false;};img.src=URL.createObjectURL(f);};
+btnClear.onclick=()=>{result.value='';promptEl.value='';bar.style.width='0%';setStatus('Prêt.');btnProcess.disabled=!capturedImage;};
+
+function enhanceContrast(){const d=ctx.getImageData(0,0,canvas.width,canvas.height);const a=d.data;for(let i=0;i<a.length;i+=4){const avg=(a[i]+a[i+1]+a[i+2])/3;const v=avg>150?255:0;a[i]=a[i+1]=a[i+2]=v;}ctx.putImageData(d,0,0);}
+function resizeIfNeeded(maxW=1600){if(canvas.width<=maxW)return;const scale=maxW/canvas.width;const t=document.createElement('canvas');t.width=maxW;t.height=Math.round(canvas.height*scale);t.getContext('2d').drawImage(canvas,0,0,t.width,t.height);canvas.width=t.width;canvas.height=t.height;ctx.drawImage(t,0,0);}
+function cleanText(s){return (s||'').replace(/[|_•·■□◆◇●◦·•]/g,'').replace(/[–—]/g,'-').replace(/\s{2,}/g,' ').trim();}
+function readQR(){const img=ctx.getImageData(0,0,canvas.width,canvas.height);const code=jsQR(img.data,canvas.width,canvas.height);return code?code.data:'';}
+
+async function doOCR(dataURL){return new Promise((res,rej)=>{Tesseract.recognize(dataURL,'fra+eng',{langPath:'https://tessdata.projectnaptha.com/4.0.0_best/',logger:m=>{if(m.progress!=null)setStatus('OCR…',m.progress);}}).then(({data:{text}})=>res(text)).catch(rej);});}
+
+btnProcess.onclick=async()=>{if(!capturedImage)return alert('Aucune image.');try{
+  setStatus('Prétraitement (taille)…',0.05); resizeIfNeeded(1600);
+  setStatus('Prétraitement (contraste)…',0.1); enhanceContrast();
+  setStatus('Lecture QR…',0.15); const qr=readQR();
+  setStatus('OCR…',0.2); const text=await doOCR(canvas.toDataURL('image/png')); const cleaned=cleanText(text);
+  const compiled=`# Texte manuscrit (OCR)
+${cleaned}
+
+# Données QR
+${qr||'(aucun code détecté)'}
+`; result.value=compiled;
+  const defaultPrompt=`Analyse cette fiche opérationnelle RCH (texte OCR + QR).
+Objectif: extraire les informations clés (produit, dangers, AEGL/IDLH si mentionnés, zones, moyens engagés, décisions) et proposer un plan d'action synthétique RCH3/RCH4.
+---
+${compiled}`.trim();
+  promptEl.value=defaultPrompt; setStatus('Terminé.',1);
+}catch(err){console.error(err);alert('Erreur traitement: '+err.message);setStatus('Erreur.');}};
+
+btnOpen.onclick=()=>{const q=encodeURIComponent(promptEl.value||result.value||'');if(!q)return alert('Prompt vide.');window.open('https://chat.openai.com/?q='+q,'_blank');};
+btnCopy.onclick=async()=>{try{await navigator.clipboard.writeText(promptEl.value||result.value||'');btnCopy.textContent='Copié !';setTimeout(()=>btnCopy.textContent='Copier',1200);}catch(e){};}
+</script>
+</body>
+</html>
